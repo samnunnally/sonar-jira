@@ -17,24 +17,21 @@ You should have received a copy of the GNU Lesser General Public
 License along with this program; if not, write to the Free Software
 Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02
 */
-package org.sonar.plugins.jira.metrics;
 
-import org.sonar.api.web.AbstractRubyTemplate;
-import org.sonar.api.web.RubyRailsWidget;
-import org.sonar.api.web.WidgetCategory;
+package org.sonar.plugins.jira;
 
-@WidgetCategory({"JIRA"})
-public final class JiraWidget extends AbstractRubyTemplate implements RubyRailsWidget {
-  public String getId() {
-    return "jira";
-  }
+import java.net.URL;
 
-  public String getTitle() {
-    return "JIRA issues";
-  }
+import org.sonar.api.config.Settings;
+import org.sonar.api.rules.RuleFinder;
 
-  @Override
-  protected String getTemplatePath() {
-    return "/org/sonar/plugins/jira/metrics/jiraWidget.html.erb";
-  }
+public interface JiraSession extends AutoCloseable
+{
+
+	public void connect(String userName, String password);
+	public JiraService getJiraService(RuleFinder ruleFinder, Settings settings);
+	public String getAuthenticationToken();
+	public URL getWebServiceUrl();
+	public void close();
+	
 }

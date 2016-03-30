@@ -17,24 +17,25 @@ You should have received a copy of the GNU Lesser General Public
 License along with this program; if not, write to the Free Software
 Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02
 */
-package org.sonar.plugins.jira.metrics;
 
-import org.sonar.api.web.AbstractRubyTemplate;
-import org.sonar.api.web.RubyRailsWidget;
-import org.sonar.api.web.WidgetCategory;
+package org.sonar.plugins.jira;
 
-@WidgetCategory({"JIRA"})
-public final class JiraWidget extends AbstractRubyTemplate implements RubyRailsWidget {
-  public String getId() {
-    return "jira";
-  }
+import java.util.List;
 
-  public String getTitle() {
-    return "JIRA issues";
-  }
+import org.sonar.api.issue.Issue;
 
-  @Override
-  protected String getTemplatePath() {
-    return "/org/sonar/plugins/jira/metrics/jiraWidget.html.erb";
-  }
+import com.atlassian.jira.rest.client.api.domain.BasicIssue;
+import com.atlassian.jira.rest.client.api.domain.BasicPriority;
+import com.atlassian.jira.rest.client.api.domain.Filter;
+import com.atlassian.jira.rest.client.api.domain.input.IssueInput;
+
+public interface JiraService {
+
+    BasicIssue createIssue(IssueInput issueInput);
+    BasicIssue createIssue(String authToken, Issue sonarIssue);
+    List<BasicPriority> getPriorities(String authToken);
+    List<Filter> getFavouriteFilters(String authToken);
+    List<Filter> getSavedFilters(String authToken);
+    List<com.atlassian.jira.rest.client.api.domain.Issue> getIssuesFromFilter(String authToken, String id);
+
 }

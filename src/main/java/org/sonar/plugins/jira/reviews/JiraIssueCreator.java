@@ -19,13 +19,10 @@
  */
 package org.sonar.plugins.jira.reviews;
 
-import com.atlassian.jira.rpc.soap.client.JiraSoapService;
-import com.atlassian.jira.rpc.soap.client.RemoteAuthenticationException;
-import com.atlassian.jira.rpc.soap.client.RemoteComponent;
-import com.atlassian.jira.rpc.soap.client.RemoteIssue;
-import com.atlassian.jira.rpc.soap.client.RemotePermissionException;
-import com.atlassian.jira.rpc.soap.client.RemoteValidationException;
-import org.apache.commons.lang.StringUtils;
+import java.net.MalformedURLException;
+import java.net.URL;
+import java.rmi.RemoteException;
+
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.sonar.api.CoreProperties;
@@ -40,21 +37,32 @@ import org.sonar.api.rules.RuleFinder;
 import org.sonar.api.rules.RulePriority;
 import org.sonar.api.utils.SonarException;
 import org.sonar.plugins.jira.JiraConstants;
-import org.sonar.plugins.jira.soap.JiraSoapSession;
+import org.sonar.plugins.jira.JiraService;
+import org.sonar.plugins.jira.JiraSession;
+import org.sonar.plugins.jira.rest.JiraRestSession;
 
-import java.net.MalformedURLException;
-import java.net.URL;
-import java.rmi.RemoteException;
+import com.atlassian.jira.rest.client.api.domain.BasicIssue;
 
 /**
  * SOAP client class that is used for creating issues on a JIRA server
  */
-@Properties({
+/**
+ * Client class that is used for creating issues on a JIRA server
+ */
+@Properties({	
   @Property(
     key = JiraConstants.SOAP_BASE_URL_PROPERTY,
     defaultValue = JiraConstants.SOAP_BASE_URL_DEF_VALUE,
     name = "SOAP base URL",
     description = "Base URL for the SOAP API of the JIRA server",
+    global = true,
+    project = true
+  ),
+  @Property(
+    key = JiraConstants.REST_BASE_URL_PROPERTY,
+    defaultValue = JiraConstants.REST_BASE_URL_DEF_VALUE,
+    name = "REST base URL",
+    description = "Base URL for the REST API of the JIRA server",
     global = true,
     project = true
   ),
@@ -128,143 +136,162 @@ import java.rmi.RemoteException;
     global = false,
     project = true,
     type = PropertyType.INTEGER
-  )
+  ),
+  @Property(
+    key = JiraConstants.JIRA_ISSUE_SONAR_LABEL,
+    defaultValue = "SONAR",
+    name = "Jira label",
+    description = "JIRA label for all sonar issues.",
+    global = true,
+    project = true,
+    type = PropertyType.STRING
+  ),
+  @Property(
+		    key = JiraConstants.JIRA_AUTOCREATE_BLOCKER,
+		    defaultValue = JiraConstants.JIRA_AUTOCREATE_BLOCKER_DEF_VALUE,
+		    name = JiraConstants.JIRA_AUTOCREATE_BASE_NAME + "Blocker",
+		    description = JiraConstants.JIRA_AUTOCREATE_BASE_DESC + "Blocker",
+		    global = true,
+		    project = true
+		  ),
+  @Property(
+		    key = JiraConstants.JIRA_AUTOCREATE_CRITICAL,
+		    defaultValue = JiraConstants.JIRA_AUTOCREATE_CRITICAL_DEF_VALUE,
+		    name = JiraConstants.JIRA_AUTOCREATE_BASE_NAME + "Critical",
+		    description = JiraConstants.JIRA_AUTOCREATE_BASE_DESC + "Critical",
+		    global = true,
+		    project = true
+		  ),
+  @Property(
+		    key = JiraConstants.JIRA_AUTOCREATE_MAJOR,
+		    defaultValue = JiraConstants.JIRA_AUTOCREATE_MAJOR_DEF_VALUE,
+		    name = JiraConstants.JIRA_AUTOCREATE_BASE_NAME + "Major",
+		    description = JiraConstants.JIRA_AUTOCREATE_BASE_DESC + "Major",
+		    global = true,
+		    project = true
+		  ),
+  @Property(
+		    key = JiraConstants.JIRA_AUTOCREATE_MINOR,
+		    defaultValue = JiraConstants.JIRA_AUTOCREATE_MINOR_DEF_VALUE,
+		    name = JiraConstants.JIRA_AUTOCREATE_BASE_NAME + "Minor",
+		    description = JiraConstants.JIRA_AUTOCREATE_BASE_DESC + "Minor",
+		    global = true,
+		    project = true
+		  ),
+  @Property(
+		    key = JiraConstants.JIRA_AUTOCREATE_INFO,
+		    defaultValue = JiraConstants.JIRA_AUTOCREATE_INFO,
+		    name = JiraConstants.JIRA_AUTOCREATE_BASE_NAME + "Info",
+		    description = JiraConstants.JIRA_AUTOCREATE_BASE_DESC + "Info",
+		    global = true,
+		    project = true
+		  )
 })
 public class JiraIssueCreator implements ServerExtension {
 
-  private static final String QUOTE = "\n{quote}\n";
-  private static final Logger LOG = LoggerFactory.getLogger(JiraIssueCreator.class);
-  private final RuleFinder ruleFinder;
+	private static final String QUOTE = "\n{quote}\n";
+	private static final Logger LOG = LoggerFactory.getLogger(JiraIssueCreator.class);
+	private final RuleFinder ruleFinder;
 
-  public JiraIssueCreator(RuleFinder ruleFinder) {
-    this.ruleFinder = ruleFinder;
-  }
+	public JiraIssueCreator(RuleFinder ruleFinder) {
+		this.ruleFinder = ruleFinder;
+	}
 
-  public RemoteIssue createIssue(Issue sonarIssue, Settings settings) throws RemoteException {
-    JiraSoapSession soapSession = createSoapSession(settings);
+	public BasicIssue createIssue(Issue sonarIssue, Settings settings) throws RemoteException {
+		try (JiraSession soapSession = createJiraSession(settings);) {
+			return doCreateIssue(sonarIssue, soapSession, settings);
+		}
+	}
 
-    return doCreateIssue(sonarIssue, soapSession, settings);
-  }
+	protected JiraSession createJiraSession(Settings settings) {
+		LOG.error("creating REST session");
+		return createRestSession(settings);
+	}
 
-  protected JiraSoapSession createSoapSession(Settings settings) {
-    String jiraUrl = settings.getString(JiraConstants.SERVER_URL_PROPERTY);
-    String baseUrl = settings.getString(JiraConstants.SOAP_BASE_URL_PROPERTY);
-    String completeUrl = jiraUrl + baseUrl;
+	private JiraSession createRestSession(Settings settings) {
+		String jiraUrl = settings.getString(JiraConstants.SERVER_URL_PROPERTY);
+		String baseUrl = settings.getString(JiraConstants.REST_BASE_URL_PROPERTY);
 
-    // get handle to the JIRA SOAP Service from a client point of view
-    JiraSoapSession soapSession = null;
-    try {
-      soapSession = new JiraSoapSession(new URL(completeUrl));
-    } catch (MalformedURLException e) {
-      LOG.error("The JIRA server URL is not a valid one: " + completeUrl, e);
-      throw new IllegalStateException("The JIRA server URL is not a valid one: " + completeUrl, e);
-    }
-    return soapSession;
-  }
+		String completeUrl = jiraUrl + baseUrl;
+		try {
+			return new JiraRestSession(new URL(completeUrl));
+		} catch (MalformedURLException e) {
+			LOG.error("The JIRA server URL is not a valid one: " + completeUrl, e);
+			throw new IllegalStateException("The JIRA server URL is not a valid one: " + completeUrl, e);
+		}
+	}
 
-  protected RemoteIssue doCreateIssue(Issue sonarIssue, JiraSoapSession soapSession, Settings settings) {
-    // Connect to JIRA
-    String jiraUrl = settings.getString(JiraConstants.SERVER_URL_PROPERTY);
-    String userName = settings.getString(JiraConstants.USERNAME_PROPERTY);
-    String password = settings.getString(JiraConstants.PASSWORD_PROPERTY);
-    try {
-      soapSession.connect(userName, password);
-    } catch (RemoteException e) {
-      throw new IllegalStateException("Impossible to connect to the JIRA server (" + jiraUrl + ").", e);
-    }
+	protected BasicIssue doCreateIssue(Issue sonarIssue, JiraSession session, Settings settings) {
+		// Connect to JIRA
+		String userName = settings.getString(JiraConstants.USERNAME_PROPERTY);
+		String password = settings.getString(JiraConstants.PASSWORD_PROPERTY);
 
-    // The JIRA SOAP Service and authentication token are used to make authentication calls
-    JiraSoapService jiraSoapService = soapSession.getJiraSoapService();
-    String authToken = soapSession.getAuthenticationToken();
+		session.connect(userName, password);
 
-    // And create the issue
-    RemoteIssue issue = initRemoteIssue(sonarIssue, settings);
-    RemoteIssue returnedIssue = sendRequest(jiraSoapService, authToken, issue, jiraUrl, userName);
+		// The JIRA SOAP Service and authentication token are used to make
+		// authentication calls
+		JiraService jiraService = session.getJiraService(ruleFinder, settings);
+		String authToken = session.getAuthenticationToken();
 
-    String issueKey = returnedIssue.getKey();
-    LOG.debug("Successfully created issue {}", issueKey);
+		// And create the issue
+		BasicIssue returnedIssue = jiraService.createIssue(authToken, sonarIssue);
+		String issueKey = returnedIssue.getKey();
+		LOG.debug("Successfully created issue {}", issueKey);
 
-    return returnedIssue;
-  }
+		return returnedIssue;
+	}
 
-  protected RemoteIssue sendRequest(JiraSoapService jiraSoapService, String authToken, RemoteIssue issue, String jiraUrl, String userName) {
-    try {
-      return jiraSoapService.createIssue(authToken, issue);
-    } catch (RemoteAuthenticationException e) {
-      throw new IllegalStateException("Impossible to connect to the JIRA server (" + jiraUrl + ") because of invalid credentials for user " + userName, e);
-    } catch (RemotePermissionException e) {
-      throw new IllegalStateException("Impossible to create the issue on the JIRA server (" + jiraUrl + ") because user " + userName + " does not have enough rights.", e);
-    } catch (RemoteValidationException e) {
-      // Unfortunately the detailed cause of the error is not in fault details (ie stack) but only in fault string
-      String message = StringUtils.removeStart(e.getFaultString(), "com.atlassian.jira.rpc.exception.RemoteValidationException:").trim();
-      throw new IllegalStateException("Impossible to create the issue on the JIRA server (" + jiraUrl + "): " + message, e);
-    } catch (RemoteException e) {
-      throw new IllegalStateException("Impossible to create the issue on the JIRA server (" + jiraUrl + ")", e);
-    }
-  }
+	protected BasicIssue sendRequest(JiraService jiraService, String authToken, Issue issue, String jiraUrl,
+			String userName) {
+		return jiraService.createIssue(authToken, issue);
+	}
 
-  protected RemoteIssue initRemoteIssue(Issue sonarIssue, Settings settings) {
-    RemoteIssue issue = new RemoteIssue();
-    issue.setProject(settings.getString(JiraConstants.JIRA_PROJECT_KEY_PROPERTY));
-    issue.setType(settings.getString(JiraConstants.JIRA_ISSUE_TYPE_ID));
-    issue.setPriority(sonarSeverityToJiraPriorityId(RulePriority.valueOf(sonarIssue.severity()), settings));
-    issue.setSummary(generateIssueSummary(sonarIssue));
-    issue.setDescription(generateIssueDescription(sonarIssue, settings));
-    if (settings.hasKey(JiraConstants.JIRA_ISSUE_COMPONENT_ID)) {
-      String componentId = settings.getString(JiraConstants.JIRA_ISSUE_COMPONENT_ID);
-      RemoteComponent rc = new RemoteComponent();
-      rc.setId(componentId);
-      issue.setComponents(new RemoteComponent[] {rc});
-    }
-    return issue;
-  }
+	protected String generateIssueSummary(Issue sonarIssue) {
+		Rule rule = ruleFinder.findByKey(sonarIssue.ruleKey());
 
-  protected String generateIssueSummary(Issue sonarIssue) {
-    Rule rule = ruleFinder.findByKey(sonarIssue.ruleKey());
+		StringBuilder summary = new StringBuilder("SonarQube Issue #");
+		summary.append(sonarIssue.key());
+		if (rule != null && rule.getName() != null) {
+			summary.append(" - ");
+			summary.append(rule.getName().toString());
+		}
+		return summary.toString();
+	}
 
-    StringBuilder summary = new StringBuilder("SonarQube Issue #");
-    summary.append(sonarIssue.key());
-    if (rule != null && rule.getName() != null) {
-      summary.append(" - ");
-      summary.append(rule.getName().toString());
-    }
-    return summary.toString();
-  }
+	protected String generateIssueDescription(Issue sonarIssue, Settings settings) {
+		StringBuilder description = new StringBuilder("Issue detail:");
+		description.append(QUOTE);
+		description.append(sonarIssue.message());
+		description.append(QUOTE);
+		description.append("\n\nCheck it on SonarQube: ");
+		description.append(settings.getString(CoreProperties.SERVER_BASE_URL));
+		description.append("/issue/show/");
+		description.append(sonarIssue.key());
+		return description.toString();
+	}
 
-  protected String generateIssueDescription(Issue sonarIssue, Settings settings) {
-    StringBuilder description = new StringBuilder("Issue detail:");
-    description.append(QUOTE);
-    description.append(sonarIssue.message());
-    description.append(QUOTE);
-    description.append("\n\nCheck it on SonarQube: ");
-    description.append(settings.getString(CoreProperties.SERVER_BASE_URL));
-    description.append("/issue/show/");
-    description.append(sonarIssue.key());
-    return description.toString();
-  }
-
-  protected String sonarSeverityToJiraPriorityId(RulePriority reviewSeverity, Settings settings) {
-    final String priorityId;
-    switch (reviewSeverity) {
-      case INFO:
-        priorityId = settings.getString(JiraConstants.JIRA_INFO_PRIORITY_ID);
-        break;
-      case MINOR:
-        priorityId = settings.getString(JiraConstants.JIRA_MINOR_PRIORITY_ID);
-        break;
-      case MAJOR:
-        priorityId = settings.getString(JiraConstants.JIRA_MAJOR_PRIORITY_ID);
-        break;
-      case CRITICAL:
-        priorityId = settings.getString(JiraConstants.JIRA_CRITICAL_PRIORITY_ID);
-        break;
-      case BLOCKER:
-        priorityId = settings.getString(JiraConstants.JIRA_BLOCKER_PRIORITY_ID);
-        break;
-      default:
-        throw new SonarException("Unable to convert review severity to JIRA priority: " + reviewSeverity);
-    }
-    return priorityId;
-  }
+	protected String sonarSeverityToJiraPriorityId(RulePriority reviewSeverity, Settings settings) {
+		final String priorityId;
+		switch (reviewSeverity) {
+		case INFO:
+			priorityId = settings.getString(JiraConstants.JIRA_INFO_PRIORITY_ID);
+			break;
+		case MINOR:
+			priorityId = settings.getString(JiraConstants.JIRA_MINOR_PRIORITY_ID);
+			break;
+		case MAJOR:
+			priorityId = settings.getString(JiraConstants.JIRA_MAJOR_PRIORITY_ID);
+			break;
+		case CRITICAL:
+			priorityId = settings.getString(JiraConstants.JIRA_CRITICAL_PRIORITY_ID);
+			break;
+		case BLOCKER:
+			priorityId = settings.getString(JiraConstants.JIRA_BLOCKER_PRIORITY_ID);
+			break;
+		default:
+			throw new SonarException("Unable to convert review severity to JIRA priority: " + reviewSeverity);
+		}
+		return priorityId;
+	}
 
 }
