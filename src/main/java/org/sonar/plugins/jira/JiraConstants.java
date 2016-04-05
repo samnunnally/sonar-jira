@@ -49,6 +49,8 @@ public final class JiraConstants {
   public static final String JIRA_BLOCKER_PRIORITY_ID = "sonar.jira.blocker.priority.id";
 
   public static final String JIRA_ISSUE_TYPE_ID = "sonar.jira.issue.type.id";
+  public static final String JIRA_EPIC_TYPE_ID = "sonar.jira.epic.type.id";
+  public static final String JIRA_EPIC_CUSTOM_FIELD = "sonar.jira.epic.custom.field";
 
   public static final String JIRA_ISSUE_COMPONENT_ID = "sonar.jira.issue.component.id";
   public static final String JIRA_ISSUE_SONAR_LABEL = "sonar.jira.issue.sonar.label";
@@ -67,6 +69,11 @@ public final class JiraConstants {
   
   public static final String JIRA_AUTOCREATE_BASE_NAME = "Auto-Create Issue for type ";
   public static final String JIRA_AUTOCREATE_BASE_DESC = "When set to true, JIRA issue will be created for type ";
+  
+  public static final String JIRA_SONAR_API_URL = "sonar.api.url";
+  public static final String JIRA_SONAR_API_USER = "sonar.api.user.secured";
+  public static final String JIRA_SONAR_API_PASSWORD = "sonar.api.password.secured";
+  
   
   private JiraConstants() {
   }

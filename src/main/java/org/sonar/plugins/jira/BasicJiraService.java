@@ -99,7 +99,7 @@ public abstract class BasicJiraService implements JiraService {
 				description.append(", line "+sonarIssue.line());		
 		    description.append("\n\nCheck it on SonarQube: ");
 		    description.append(settings.getString(CoreProperties.SERVER_BASE_URL));
-		    description.append("/issues/show/");
+		    description.append("issues/show/");
 		    description.append(sonarIssue.key());
 		    return description.toString();
 	}

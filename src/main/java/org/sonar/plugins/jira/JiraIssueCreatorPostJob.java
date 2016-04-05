@@ -68,20 +68,49 @@ public class JiraIssueCreatorPostJob implements PostJob, CheckProject {
   private boolean autoCreateCritical = false;
   private boolean autoCreateMinor = false;
   private boolean autoCreateInfo = false;
+  private String severitySearchString;
 
   public JiraIssueCreatorPostJob(Settings settings, RuleFinder ruleFinder) {
     this.settings = settings;
 
     if (this.settings != null) {
+      StringBuilder severitySearchString = new StringBuilder("");
       this.autoCreateBlocker =
           Boolean.valueOf(settings.getString(JiraConstants.JIRA_AUTOCREATE_BLOCKER));
+      if (this.autoCreateBlocker) {
+        severitySearchString.append("BLOCKER,");
+      }
+
       this.autoCreateMajor =
           Boolean.valueOf(settings.getString(JiraConstants.JIRA_AUTOCREATE_MAJOR));
+      if (this.autoCreateMajor) {
+        severitySearchString.append("MAJOR,");
+      }
+
       this.autoCreateCritical =
           Boolean.valueOf(settings.getString(JiraConstants.JIRA_AUTOCREATE_CRITICAL));
+      if (this.autoCreateCritical) {
+        severitySearchString.append("CRITICAL,");
+      }
+
       this.autoCreateMinor =
           Boolean.valueOf(settings.getString(JiraConstants.JIRA_AUTOCREATE_MINOR));
+      if (this.autoCreateMinor) {
+        severitySearchString.append("MINOR,");
+      }
+
       this.autoCreateInfo = Boolean.valueOf(settings.getString(JiraConstants.JIRA_AUTOCREATE_INFO));
+      if (this.autoCreateInfo) {
+        severitySearchString.append("INFO,");
+      }
+
+      int length = severitySearchString.length();
+
+      if (length > 0) {
+        severitySearchString.deleteCharAt(length-1);
+      }
+
+      this.severitySearchString = severitySearchString.toString();
     }
   }
 
@@ -104,33 +133,45 @@ public class JiraIssueCreatorPostJob implements PostJob, CheckProject {
    */
   @Override
   public void executeOn(Project project, SensorContext context) {
-    LOG.info("ListAllIssuesPostJob");
+    LOG.info("executing JiraIssueCreatorPostJob");
 
-    Client client = ClientBuilder.newBuilder().newClient();
-    WebTarget target =
-        client.target("http://localhost:9000").register(new Authenticator("admin", "admin"));
+    if (!StringUtils.isEmpty(settings.getString(JiraConstants.JIRA_PROJECT_KEY_PROPERTY))) {
+      LOG.info("project key =" + settings.getString(JiraConstants.JIRA_PROJECT_KEY_PROPERTY));
+      Client client = ClientBuilder.newBuilder().newClient();
 
-    target = target.path("api/issues/search").queryParam("projectKeys", project.getKey())
-        .queryParam("additionalFields", "_all");
 
-    Invocation.Builder builder = target.request();
-    Response response = builder.get();
-    Map<String, Object> jsonResponse = response.readEntity(Map.class);
+      StringBuilder sb = new StringBuilder();
 
-    Object o = jsonResponse.get("issues");
+      WebTarget target = client.target(settings.getString(JiraConstants.JIRA_SONAR_API_URL))
+          .register(new Authenticator(settings.getString(JiraConstants.JIRA_SONAR_API_USER),
+              settings.getString(JiraConstants.JIRA_SONAR_API_PASSWORD)));
 
-    if (o != null) {
 
-      @SuppressWarnings("unchecked")
-      List<Map<String, Object>> issues = (List<Map<String, Object>>) o;
+      target = target.path("api/issues/search").queryParam("projectKeys", project.getKey())
+          .queryParam("additionalFields", "_all").queryParam("ps", 500)
+          .queryParam("severities", this.severitySearchString);
 
-      try {
-        createIssues(project, context, issues);
-      } catch (MalformedURLException e) {
-        LOG.error(e.toString());
+      Invocation.Builder builder = target.request();
+      Response response = builder.get();
+      Map<String, Object> jsonResponse = response.readEntity(Map.class);
+
+      Object o = jsonResponse.get("issues");
+
+      if (o != null) {
+        LOG.info("sonar issues for project key =" + project.getKey());
+
+        @SuppressWarnings("unchecked")
+        List<Map<String, Object>> issues = (List<Map<String, Object>>) o;
+        LOG.info("sonar issues for project key =" + project.getKey() + " issues= "
+            + (issues != null ? issues.size() : "none"));
+
+        try {
+          createIssues(project, context, issues);
+        } catch (MalformedURLException e) {
+          LOG.error(e.toString());
+        }
       }
     }
-
   }
 
   private List<Map<String, Object>> createIssues(Project project, SensorContext context,
@@ -147,6 +188,8 @@ public class JiraIssueCreatorPostJob implements PostJob, CheckProject {
 
 
       for (Map<String, Object> issue : issues) {
+
+
         if (issue.containsKey("comments") && issue.get("comments") != null) {
           Object comments = issue.get("comments");
 
@@ -161,7 +204,7 @@ public class JiraIssueCreatorPostJob implements PostJob, CheckProject {
                 }
               }
             }
-            if(hasJiraIssue){
+            if (hasJiraIssue) {
               continue;
             }
           }
@@ -213,8 +256,11 @@ public class JiraIssueCreatorPostJob implements PostJob, CheckProject {
             form.param("issue", (String) issue.get("key"));
             form.param("text", generateCommentText(basicIssue, settings));
 
-            WebTarget target = client.target("http://localhost:9000").path("api/issues/add_comment")
-                .register(new Authenticator("admin", "admin"));
+            WebTarget target = client.target(settings.getString(JiraConstants.JIRA_SONAR_API_URL))
+                .path("api/issues/add_comment")
+                .register(new Authenticator(settings.getString(JiraConstants.JIRA_SONAR_API_USER),
+                    settings.getString(JiraConstants.JIRA_SONAR_API_PASSWORD)));
+
             Response response = target.request(MediaType.APPLICATION_JSON_TYPE)
                 .post(Entity.entity(form, MediaType.APPLICATION_FORM_URLENCODED_TYPE));
 
@@ -222,6 +268,8 @@ public class JiraIssueCreatorPostJob implements PostJob, CheckProject {
           }
         }
       }
+    } catch (Exception e) {
+      LOG.error(e.toString());
     }
     return issuesForJira;
   }
@@ -236,11 +284,10 @@ public class JiraIssueCreatorPostJob implements PostJob, CheckProject {
   }
 
   private IssueInput createSonarIssue(SensorContext context, Map<String, Object> issue) {
+    LOG.info("creating jira issue " + issue.get("key"));
 
     StringBuilder summary = new StringBuilder("SonarQube Issue #");
     summary.append(issue.get("key")).append(" - ").append(issue.get("rule"));
-
-
 
     IssueInputBuilder builder =
         new IssueInputBuilder(this.settings.getString(JiraConstants.JIRA_PROJECT_KEY_PROPERTY),
@@ -251,10 +298,16 @@ public class JiraIssueCreatorPostJob implements PostJob, CheckProject {
         RulePriority.valueOf((String) issue.get("severity")), settings)));
     builder.setDescription(generateIssueDescription(issue));
 
+    if (!StringUtils.isEmpty(settings.getString(JiraConstants.JIRA_EPIC_TYPE_ID))) {
+      builder.setFieldValue(settings.getString(JiraConstants.JIRA_EPIC_CUSTOM_FIELD),
+          settings.getString(JiraConstants.JIRA_EPIC_TYPE_ID));
+    }
 
     List<String> labels = getLabels();
-    if (labels != null && !labels.isEmpty())
+    if (labels != null && !labels.isEmpty()) {
       builder.setFieldValue(IssueFieldId.LABELS_FIELD.id, labels);
+    }
+
     IssueInput result = builder.build();
 
     return result;
@@ -265,7 +318,7 @@ public class JiraIssueCreatorPostJob implements PostJob, CheckProject {
     description.append("\"").append(issue.get("message")).append("\"").append("\ncomponent ")
         .append(issue.get("component")).append(", line ").append(issue.get("line"))
         .append("\n\nCheck it on SonarQube: ")
-        .append(settings.getString(CoreProperties.SERVER_BASE_URL)).append("/issues/show/")
+        .append(settings.getString(CoreProperties.SERVER_BASE_URL)).append("issues/show/")
         .append(issue.get("key"));
     return description.toString();
   }
